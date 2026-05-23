@@ -6,7 +6,6 @@ and saves them as parquet files in data/raw/.
 """
 
 import os
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -28,48 +27,32 @@ RAW_DIR.mkdir(parents=True, exist_ok=True)
 # Sites to fetch
 SITES = ["caltech", "jpl", "office_01"]
 
-# Date range — full available history
+# Date range
 START = datetime(2018, 5, 1)
 END = datetime(2020, 12, 31)
 
 
 def fetch_site(site: str, client: DataClient) -> pd.DataFrame:
-    """Fetch all sessions for a site and return as a DataFrame."""
+    """Fetch all sessions for a site using get_sessions_by_time generator."""
     print(f"\n>>> Fetching {site}...")
 
     sessions = []
-    page = 1
-
-    while True:
-        try:
-            # acnportal paginates — keep fetching until empty
-            data = client.get_sessions(
-                site,
-                start=START,
-                end=END,
-                page=page,
-                page_size=1000,
-            )
-
-            if not data:
-                break
-
-            sessions.extend(data)
-            print(f"  Page {page}: got {len(data)} sessions (total so far: {len(sessions)})")
-            page += 1
-
-            # Be polite to the API
-            time.sleep(0.5)
-
-        except Exception as e:
-            print(f"  Error on page {page}: {e}")
-            break
+    try:
+        # get_sessions_by_time returns a generator — iterate through it
+        generator = client.get_sessions_by_time(site, start=START, end=END)
+        for i, session in enumerate(generator):
+            sessions.append(session)
+            if i % 500 == 0 and i > 0:
+                print(f"  ...{i} sessions fetched so far")
+    except Exception as e:
+        print(f"  Error fetching {site}: {e}")
+        return pd.DataFrame()
 
     if not sessions:
         print(f"  WARNING: No sessions returned for {site}")
         return pd.DataFrame()
 
-    # Convert to DataFrame
+    print(f"  Total sessions fetched: {len(sessions)}")
     df = pd.json_normalize(sessions)
     df["site"] = site
     return df
@@ -83,8 +66,7 @@ def clean_sessions(df: pd.DataFrame, site: str) -> pd.DataFrame:
     print(f"\n>>> Cleaning {site}...")
     print(f"  Raw columns: {list(df.columns)}")
 
-    # ACN API returns these key fields — map to standard names
-    # Column names may vary slightly; we pick what's available
+    # Map ACN API field names to our standard names
     col_map = {
         "connectionTime": "session_start",
         "disconnectTime": "session_end",
@@ -95,7 +77,6 @@ def clean_sessions(df: pd.DataFrame, site: str) -> pd.DataFrame:
         "site": "site",
     }
 
-    # Only keep columns that exist
     available = {k: v for k, v in col_map.items() if k in df.columns}
     df = df[list(available.keys())].rename(columns=available)
 
@@ -103,18 +84,16 @@ def clean_sessions(df: pd.DataFrame, site: str) -> pd.DataFrame:
     for col in ["session_start", "session_end"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], utc=True)
-            # Convert to US/Pacific (ACN data timezone)
             df[col] = df[col].dt.tz_convert("US/Pacific")
 
-    # Drop rows with missing critical fields
+    # Drop rows missing critical fields
     df = df.dropna(subset=["session_start", "station_id"])
 
-    # Add site column if not present
     if "site" not in df.columns:
         df["site"] = site
 
     print(f"  Clean shape: {df.shape}")
-    print(f"  Date range: {df['session_start'].min()} → {df['session_start'].max()}")
+    print(f"  Date range: {df['session_start'].min()} to {df['session_start'].max()}")
     print(f"  Unique stations: {df['station_id'].nunique()}")
 
     return df
@@ -140,10 +119,9 @@ def main():
         if clean_df.empty:
             continue
 
-        # Save to parquet
         out_path = RAW_DIR / f"{site}_sessions.parquet"
         clean_df.to_parquet(out_path, index=False)
-        print(f"  Saved → {out_path}")
+        print(f"  Saved to {out_path}")
 
         summary.append({
             "site": site,
@@ -153,18 +131,20 @@ def main():
             "end": clean_df["session_start"].max(),
         })
 
-    # Print summary table
     print("\n" + "=" * 50)
     print("FETCH SUMMARY")
     print("=" * 50)
     for s in summary:
-        print(f"\nSite: {s['site']}")
-        print(f"  Sessions : {s['sessions']:,}")
-        print(f"  Stations : {s['stations']}")
-        print(f"  From     : {s['start']}")
-        print(f"  To       : {s['end']}")
+        print(f"\nSite     : {s['site']}")
+        print(f"Sessions : {s['sessions']:,}")
+        print(f"Stations : {s['stations']}")
+        print(f"From     : {s['start']}")
+        print(f"To       : {s['end']}")
 
-    print("\nDone. Files saved to data/raw/")
+    if not summary:
+        print("No data fetched. Check your API token and connection.")
+    else:
+        print("\nDone. Files saved to data/raw/")
 
 
 if __name__ == "__main__":
