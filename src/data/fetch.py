@@ -25,7 +25,7 @@ RAW_DIR = Path("data/raw")
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
 # Sites to fetch
-SITES = ["caltech", "jpl", "office_01"]
+SITES = ["caltech", "jpl", "office001"]
 
 # Date range
 START = datetime(2018, 5, 1)
