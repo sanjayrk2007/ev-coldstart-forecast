@@ -67,13 +67,14 @@ class LightGBMBaseline:
         }
 
     def fit(self, train_df):
-        clean = train_df[FEATURE_COLS + [TARGET_COL]].dropna()
+        clean = train_df[FEATURE_COLS + [TARGET_COL]].copy()
+        clean[FEATURE_COLS] = clean[FEATURE_COLS].fillna(0)
+        clean = clean.dropna(subset=[TARGET_COL])
         X = clean[FEATURE_COLS].values
         y = clean[TARGET_COL].values
         train_data = lgb.Dataset(X, label=y, feature_name=FEATURE_COLS)
         self.model = lgb.train(self.params, train_data, num_boost_round=self.n_estimators)
         return self
-
     def predict(self, eval_df):
         X = eval_df[FEATURE_COLS].fillna(0).values
         return self.model.predict(X)
