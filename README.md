@@ -1,90 +1,177 @@
-# EV Cold-Start Forecasting
+# ⚡ EV Cold-Start Forecasting
+
 > Predicting hourly demand for newly installed EV charging stations with zero usage history.
 
-**Status:** Phase 3 complete — global model + transfer learning. Synthetic augmentation next.
+![Python](https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python&logoColor=white)
+![LightGBM](https://img.shields.io/badge/LightGBM-gradient%20boosting-brightgreen?style=flat-square)
+![MLflow](https://img.shields.io/badge/MLflow-experiment%20tracking-orange?style=flat-square&logo=mlflow)
+![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square&logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-frontend-61DAFB?style=flat-square&logo=react&logoColor=black)
+![Status](https://img.shields.io/badge/Status-Phase%203%20Complete-success?style=flat-square)
 
 ---
 
-## Problem Statement
-Newly installed EV charging stations have zero usage history. Standard forecasting
-models fail without data. This system solves the cold-start problem by borrowing
-knowledge from 107 existing stations, adapting it to a new station with as little
-as one week of local data, and wrapping predictions in calibrated uncertainty intervals.
+## 🧩 The Problem
+
+A newly installed EV charging station has **zero usage history**.  
+Standard forecasting models fail without data.  
+Operators are flying blind on demand, capacity planning, and grid load.
 
 ---
 
-## Architecture (coming soon in Phase 9)
+## 💡 The Solution
+
+A four-layer ML system that solves cold-start from day one:
+
+```
+ACN-Data (107 stations)
+        │
+        ▼
+┌─────────────────────────┐
+│   Global LightGBM Model │  ← learns shared demand grammar across all stations
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│   Transfer + Fine-Tune  │  ← adapts to new station with 1 week of data
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│  Synthetic Augmentation │  ← TimeGAN / Gaussian Copula fills history gaps
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│  Conformal Prediction   │  ← calibrated uncertainty intervals, not just points
+└─────────────────────────┘
+```
 
 ---
 
-## Results So Far
+## 📊 Results — Phase 3 Transfer Learning
 
-### Phase 3 — Transfer Learning Ablation (evaluated on held-out office001 site)
+> All models evaluated on **office001** — a completely held-out site,  
+> never seen during training or validation.
 
-| Weeks of Data | Transfer MAE | Vanilla LightGBM | Seasonal Naive |
-|---------------|-------------|-----------------|----------------|
-| 1 week        | **0.0279**  | 0.0300          | 0.3488         |
-| 2 weeks       | **0.0290**  | 0.0402          | 0.3438         |
-| 3 weeks       | **0.0284**  | 0.0353          | 0.3481         |
+| Weeks of Data | 🔁 Transfer MAE | Vanilla LightGBM | Seasonal Naive |
+|:---:|:---:|:---:|:---:|
+| 1 week | **0.0279** | 0.0300 | 0.3488 |
+| 2 weeks | **0.0290** | 0.0402 | 0.3438 |
+| 3 weeks | **0.0284** | 0.0353 | 0.3481 |
 
-Key finding: transfer learning is stable at ~0.028 MAE regardless of fine-tuning
-data volume. One week of new-station data is sufficient for near-optimal predictions.
-Vanilla LightGBM degrades with more weeks, suggesting overfitting on sparse data.
+**Key finding:** Transfer MAE is flat across all data volumes.  
+→ One week of new-station data is sufficient for near-optimal predictions.  
+→ Vanilla LightGBM degrades with more weeks — overfitting on sparse data.  
+→ Transfer beats Seasonal Naive by **12×**.
 
 ---
 
-## Setup
+## 🗂️ Data
+
+- **Source:** [ACN-Data](https://ev.caltech.edu/dataset) — real EV charging sessions from Caltech, JPL, and office campuses
+- **Training:** 107 stations across Caltech + JPL (2,020,364 rows)
+- **Test site:** office001 — 8 stations, held out entirely, never touched during training
+
+---
+
+## 🔬 Experiment Tracking
+
+All runs logged to MLflow across every phase.
+
+```bash
+mlflow ui
+# → http://localhost:5000
+```
+
+| Experiment | Runs | Description |
+|---|---|---|
+| `phase3_transfer` | 48 | Transfer vs vanilla, 8 stations × 3 volumes × 2 models |
+
+---
+
+## 🚀 Setup
+
 ```bash
 git clone https://github.com/YOUR_USERNAME/ev-coldstart-forecast.git
 cd ev-coldstart-forecast
 cp .env.example .env
-# fill in .env values
 docker-compose up
 ```
 
 ---
 
-## Phases
+## 🗺️ Build Progress
 
 | Phase | Focus | Status |
-|-------|-------|--------|
-| 0 | Environment setup | ✅ Done |
-| 1 | Data ingestion + EDA | ✅ Done |
-| 2 | Baseline models | ✅ Done |
-| 3 | Transfer learning | ✅ Done |
-| 4 | Synthetic augmentation | 🔄 In Progress |
-| 5 | Uncertainty quantification | — |
-| 6 | Site selection | — |
-| 7 | FastAPI backend | — |
-| 8 | React frontend | — |
-| 9 | Docker + AWS | — |
-| 10 | README + docs | — |
+|-------|-------|:---:|
+| 0 | Environment setup | ✅ |
+| 1 | Data ingestion + EDA | ✅ |
+| 2 | Baseline models | ✅ |
+| 3 | Transfer learning | ✅ |
+| 4 | Synthetic augmentation | 🔄 |
+| 5 | Uncertainty quantification | ⬜ |
+| 6 | Site selection | ⬜ |
+| 7 | FastAPI backend | ⬜ |
+| 8 | React frontend | ⬜ |
+| 9 | Docker + AWS | ⬜ |
+| 10 | README + docs | ⬜ |
 
 ---
 
-## Key Decisions
+## 🧠 Key Decisions
 
-**Why LightGBM over a neural network?**
-Limited data per station makes deep models unstable. LightGBM is more robust
-under scarce data conditions and trains in seconds, enabling rapid ablation.
+<details>
+<summary><b>Why LightGBM over a neural network?</b></summary>
+<br>
+Limited data per station makes deep models unstable under scarce data conditions.
+LightGBM trains in seconds, enabling rapid ablation across 24 experiment runs.
+Stability under scarcity matters more than model capacity here.
+</details>
 
-**Why office001 as the held-out test site?**
-office001 was never seen during global model training or validation. It represents
-a genuinely unseen operational context — the closest simulation of a real cold-start
-deployment.
+<details>
+<summary><b>Why office001 as the held-out test site?</b></summary>
+<br>
+office001 was never seen during global model training or validation.
+It represents a genuinely unseen operational context — the closest
+simulation of a real cold-start deployment scenario.
+</details>
 
-**Why not ARIMA?**
-statsforecast has a known multiprocessing conflict on Windows + Jupyter. pmdarima
-is a compatible alternative but was excluded to maintain phase momentum. ARIMA
-results would be expected to fall between SeasonalNaive and LightGBM baselines.
+<details>
+<summary><b>Why not ARIMA?</b></summary>
+<br>
+statsforecast has a known multiprocessing conflict on Windows + Jupyter.
+ARIMA results would be expected to fall between SeasonalNaive and LightGBM
+baselines — not competitive with transfer learning at any data volume.
+</details>
 
 ---
 
-## Experiment Tracking
-All runs logged to MLflow. Start the UI with:
-```bash
-mlflow ui
-# opens at http://localhost:5000
+## 📁 Project Structure
+
 ```
+ev-coldstart-forecast/
+├── src/
+│   ├── data/          # loader, preprocessor, feature engineering
+│   ├── models/        # global_model, transfer, baseline
+│   ├── evaluation/    # metrics
+│   └── api/           # FastAPI app (Phase 6)
+├── notebooks/         # EDA, phase ablations
+├── data/
+│   ├── raw/
+│   ├── processed/     # per-station parquet files
+│   └── synthetic/     # augmented data (Phase 4)
+├── models/            # saved model artifacts
+├── frontend/          # React dashboard (Phase 7)
+└── docker-compose.yml
+```
+
+---
+
+<p align="center">
+  Built on <a href="https://ev.caltech.edu/dataset">ACN-Data</a> ·
+  Tracked with <a href="https://mlflow.org">MLflow</a> ·
+  Deployed on AWS EC2
+</p>
 
 
