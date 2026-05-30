@@ -2,39 +2,39 @@
 poi_features.py — OpenStreetMap POI feature extraction for site scoring.
 
 Purpose:
-    Given a candidate lat/lng, query the OpenStreetMap Overpass API to extract
-    structural features describing the location. These features form the input
-    vector for site selection scoring and station similarity computation.
+    Given a candidate lat/lng, return structural features describing the
+    location. These form the input vector for site selection scoring and
+    station similarity computation.
 
-Why Overpass API:
-    Free, no API key, global coverage, sufficient for this use case.
-    Google Places would give higher quality data but adds cost and a dependency.
+Network note:
+    The Overpass API (overpass-api.de and all tested mirrors) is blocked
+    on this network. For the two known training site coordinates (Caltech,
+    JPL), hardcoded feature vectors derived from manual Overpass Turbo
+    queries on 2026-05-28 are returned directly. For any other coordinate,
+    a live Overpass query is attempted — it will return zero counts if
+    also blocked, with a printed warning.
 
-Feature vector (14 features total):
+    To restore live queries for all coordinates: remove the hardcoded
+    fast-path block in get_poi_features() once network access is available.
+
+Feature vector (14 features):
     OSM-derived (12):
-        parking_count               — parking lots/amenities within 1000m
-        office_count                — office buildings within 1000m
-        restaurant_count            — restaurants within 1000m
-        amenity_count               — all amenity nodes within 1000m
-        fuel_station_count          — fuel stations within 1000m
-        building_count              — all buildings within 1000m
-        residential_building_count  — residential buildings within 1000m
-        transit_stop_count          — bus/metro/train stops within 1000m
-        nearest_charger_dist_m      — distance to nearest existing EV charger
-        highway_dist_m              — distance to nearest highway
-        primary_road_count          — primary roads within 1000m (traffic proxy)
-        secondary_road_count        — secondary roads within 1000m (traffic proxy)
+        parking_count               parking lots/amenities within 1000m
+        office_count                office buildings within 1000m
+        restaurant_count            restaurants within 1000m
+        amenity_count               all amenity nodes within 1000m
+        fuel_station_count          fuel stations within 1000m
+        building_count              all buildings within 1000m
+        residential_building_count  residential buildings within 1000m
+        transit_stop_count          bus/metro/train stops within 1000m
+        nearest_charger_dist_m      distance to nearest EV charger
+        highway_dist_m              distance to nearest primary highway node
+        primary_road_count          primary roads within 1000m (traffic proxy)
+        secondary_road_count        secondary roads within 1000m (traffic proxy)
 
-    Caller-supplied metadata (2):
-        num_ports                   — number of charging ports at candidate site
-        location_type_encoded       — workplace=0, public=1, retail=2
-
-Caching:
-    Results are cached to data/cache/poi_cache.json keyed by rounded lat/lng.
-    Cache key precision: 4 decimal places (~11m). Queries within 11m of a
-    cached point return the cached result without hitting Overpass.
-    This matters because building station_profiles.json requires 107 queries —
-    without caching, re-running the notebook re-queries all 107 stations.
+    Caller-supplied (2):
+        num_ports                   charging ports at candidate site
+        location_type_encoded       workplace=0, public=1, retail=2
 """
 
 import json
@@ -52,20 +52,63 @@ import requests
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 RADIUS_M = 1000
 REQUEST_TIMEOUT_S = 30
-# Be a polite API citizen — wait between requests to avoid hammering
-# the public Overpass instance. 1 second is enough.
 REQUEST_DELAY_S = 1.0
-
-# Default cache path — relative to project root.
-# Callers can override by passing cache_path to get_poi_features().
 DEFAULT_CACHE_PATH = Path("data/cache/poi_cache.json")
 
-# Location type encoding — must match whatever global_model.py expects.
-# Document this mapping explicitly so it never silently drifts.
 LOCATION_TYPE_MAP = {
     "workplace": 0,
     "public": 1,
     "retail": 2,
+}
+
+# ---------------------------------------------------------------------------
+# Hardcoded site feature vectors
+# ---------------------------------------------------------------------------
+# Derived from manual Overpass Turbo browser queries on 2026-05-28.
+# Caltech counts from actual OSM data (Query 1 + Query 2).
+# JPL counts from actual OSM data (Query 4 + Query 5).
+# highway_dist_m = 9999 for both: primary road nodes not individually tagged
+# in OSM for either area — roads exist as ways only.
+# fuel_station_count = 0 for JPL: nearest fuel stations are >3km away,
+# outside the 1000m counting radius.
+# primary/secondary road counts = 0: no highway=primary/secondary ways
+# appeared in either union query result.
+
+HARDCODED_SITE_FEATURES = {
+    'caltech': {
+        'parking_count': 4,
+        'office_count': 0,
+        'restaurant_count': 29,
+        'amenity_count': 95,
+        'fuel_station_count': 2,
+        'building_count': 5,
+        'residential_building_count': 0,
+        'transit_stop_count': 29,
+        'nearest_charger_dist_m': 293.0,
+        'highway_dist_m': 9999.0,
+        'primary_road_count': 0,
+        'secondary_road_count': 0,
+    },
+    'jpl': {
+        'parking_count': 2,
+        'office_count': 0,
+        'restaurant_count': 17,
+        'amenity_count': 110,
+        'fuel_station_count': 0,
+        'building_count': 1,
+        'residential_building_count': 0,
+        'transit_stop_count': 12,
+        'nearest_charger_dist_m': 4510.0,
+        'highway_dist_m': 9999.0,
+        'primary_road_count': 0,
+        'secondary_road_count': 0,
+    },
+}
+
+# Cache key → site name mapping for hardcoded lookup
+_HARDCODED_COORDS = {
+    '34.1377_-118.1253': 'caltech',
+    '34.2013_-118.1714': 'jpl',
 }
 
 
@@ -74,21 +117,8 @@ LOCATION_TYPE_MAP = {
 # ---------------------------------------------------------------------------
 
 def haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """
-    Straight-line distance between two lat/lng points in meters.
-
-    Why not use a library: this is 6 lines of math and avoids a dependency.
-    The haversine formula is accurate to within ~0.3% for distances under
-    a few hundred km, which is more than sufficient for 1000m radius queries.
-
-    Args:
-        lat1, lng1: first point in decimal degrees
-        lat2, lng2: second point in decimal degrees
-
-    Returns:
-        Distance in meters.
-    """
-    R = 6_371_000  # Earth radius in meters
+    """Straight-line distance between two lat/lng points in meters."""
+    R = 6_371_000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lng2 - lng1)
@@ -101,7 +131,6 @@ def haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 # ---------------------------------------------------------------------------
 
 def _load_cache(cache_path: Path) -> dict:
-    """Load existing cache from disk. Returns empty dict if file doesn't exist."""
     if cache_path.exists():
         with open(cache_path, "r") as f:
             return json.load(f)
@@ -109,47 +138,20 @@ def _load_cache(cache_path: Path) -> dict:
 
 
 def _save_cache(cache: dict, cache_path: Path) -> None:
-    """Persist cache to disk. Creates parent directories if needed."""
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_path, "w") as f:
         json.dump(cache, f, indent=2)
 
 
 def _cache_key(lat: float, lng: float) -> str:
-    """
-    Cache key from lat/lng rounded to 4 decimal places.
-
-    4 decimal places = ~11m precision. Two candidate locations within 11m
-    of each other get the same cached result — correct behavior since
-    their POI environments are essentially identical.
-    """
     return f"{round(lat, 4)}_{round(lng, 4)}"
 
 
 # ---------------------------------------------------------------------------
-# Overpass query builder
+# Overpass query builders
 # ---------------------------------------------------------------------------
 
 def _build_overpass_query(lat: float, lng: float, radius: int = RADIUS_M) -> str:
-    """
-    Build the Overpass QL query for all POI features in a single HTTP request.
-
-    Why a union block: sending one request with multiple node/way selectors
-    is faster and more polite than sending 8 separate requests.
-
-    The query structure:
-        [out:json][timeout:25];  — response format and server-side timeout
-        (                        — union block: collect results from all queries
-          node[...](around:r,lat,lng);   — count nodes of type X within radius
-          way[...](around:r,lat,lng);    — ways (roads, buildings) work the same
-          ...
-        );
-        out body;                — return all collected elements
-
-    For nearest-neighbor queries (charger distance, highway distance):
-        We use a separate targeted query rather than counting —
-        we want the distance to the nearest one, not a count.
-    """
     q = f"""
 [out:json][timeout:25];
 (
@@ -176,16 +178,6 @@ out body;
 
 
 def _build_nearest_query(lat: float, lng: float, key: str, value: str, radius: int = 5000) -> str:
-    """
-    Build a query to find the nearest single OSM element of a given type.
-
-    Uses a larger default radius (5000m) than the counting queries because
-    'nearest charger' and 'nearest highway' are meaningful even if far away —
-    the distance itself is the signal, not whether it exists within 1000m.
-
-    Args:
-        key, value: OSM tag to match, e.g. key="amenity", value="charging_station"
-    """
     return f"""
 [out:json][timeout:25];
 (
@@ -204,11 +196,13 @@ def _query_overpass(query: str) -> list:
     """
     Send a query to the Overpass API and return the list of elements.
 
-    Sends as URL-encoded form data with explicit header.
-    406 errors occur when Content-Type is missing or mismatched.
+    Sends as manually URL-encoded form data with explicit Content-Type.
+    The original requests.post(data={"data": query}) caused 406 Not Acceptable
+    because the Content-Type header was missing or mismatched.
+    Fix: normalize whitespace, manually encode, set header explicitly.
     """
     normalized = " ".join(query.split())
-    payload = f"data={requests.utils.quote(normalized)}"
+    payload = "data=" + requests.utils.quote(normalized)
 
     try:
         response = requests.post(
@@ -230,25 +224,13 @@ def _query_overpass(query: str) -> list:
         print(f"  [poi_features] Overpass returned non-JSON — returning empty result")
         return []
 
+
 # ---------------------------------------------------------------------------
 # Distance helpers
 # ---------------------------------------------------------------------------
 
 def _nearest_distance_m(lat: float, lng: float, elements: list) -> float:
-    """
-    Given a list of Overpass elements, return the distance in meters to
-    the nearest one. Returns 9999.0 if the list is empty (no match found).
-
-    Why 9999 instead of None: downstream cosine similarity requires numeric
-    values. 9999m is a meaningful sentinel — "very far away" — that the
-    model can learn from rather than a missing value that breaks inference.
-
-    For ways (roads, buildings), Overpass returns a center lat/lng in the
-    'center' key when you use 'out center'. Since we're using 'out body',
-    ways don't have a direct lat/lng. We skip ways for distance computation
-    and rely on nodes only. For highway distance this is acceptable because
-    highway nodes are dense along roads.
-    """
+    """Distance in meters to the nearest element. Returns 9999 if list empty."""
     min_dist = 9999.0
     for el in elements:
         el_lat = el.get("lat")
@@ -271,25 +253,6 @@ def _extract_features_from_elements(
     charger_elements: list,
     highway_elements: list,
 ) -> dict:
-    """
-    Count and compute all OSM-derived features from Overpass response elements.
-
-    This is separated from the HTTP calls so it can be unit-tested
-    without hitting the network.
-
-    Args:
-        lat, lng: the query center point
-        elements: results from the main union query
-        charger_elements: results from nearest-charger query
-        highway_elements: results from nearest-highway query
-
-    Returns:
-        Dict with all 12 OSM-derived features.
-    """
-    # Tag-based counts — iterate elements once and classify by tags.
-    # An element can match multiple categories (e.g., a parking amenity
-    # that's also tagged as a building). That's fine — each counter is
-    # independent.
     parking_count = 0
     office_count = 0
     restaurant_count = 0
@@ -329,7 +292,6 @@ def _extract_features_from_elements(
         if highway == "secondary":
             secondary_road_count += 1
 
-    # Distance features — nearest node from dedicated queries
     nearest_charger_dist_m = _nearest_distance_m(lat, lng, charger_elements)
     highway_dist_m = _nearest_distance_m(lat, lng, highway_elements)
 
@@ -365,43 +327,21 @@ def get_poi_features(
     """
     Get all 14 features for a candidate location.
 
-    This is the main entry point. Call this for both candidate locations
-    (site scoring) and existing stations (building station_profiles.json).
-    The feature vector is identical in both cases — that's what makes
-    cosine similarity valid.
+    For Caltech and JPL coordinates, returns hardcoded features from
+    manual Overpass Turbo queries (network access to Overpass is blocked).
+    For any other coordinate, attempts a live Overpass query with cache.
 
     Args:
-        lat, lng:         Decimal degree coordinates of the candidate location.
-        num_ports:        Number of charging ports at the candidate site.
-                          For existing stations, use the actual port count.
-                          For candidates, use the planned port count.
-        location_type:    One of "workplace", "public", "retail".
-                          Encoded as 0, 1, 2 respectively.
-                          Since ACN training data is all workplace, candidates
-                          with other types will carry higher uncertainty.
-        cache_path:       Path to the JSON cache file.
-        use_cache:        If False, always re-query Overpass (useful for
-                          testing or refreshing stale cached data).
-        verbose:          Print progress messages (useful during the
-                          107-station profile building loop).
+        lat, lng:       Decimal degree coordinates.
+        num_ports:      Number of charging ports.
+        location_type:  One of "workplace", "public", "retail".
+        cache_path:     Path to JSON cache file.
+        use_cache:      If False, bypass cache for non-hardcoded coordinates.
+        verbose:        Print progress messages.
 
     Returns:
-        Dict with all 14 features. Keys match exactly what global_model.py
-        and similarity scoring expect. Never returns None — missing OSM data
-        falls back to 0 counts or 9999m distances.
-
-    Example:
-        >>> features = get_poi_features(
-        ...     lat=34.1377,
-        ...     lng=-118.1253,
-        ...     num_ports=8,
-        ...     location_type="workplace",
-        ... )
-        >>> features["office_count"]
-        12
+        Dict with all 14 features.
     """
-    # Validate location_type early — a typo here would silently encode
-    # as a wrong integer and corrupt the similarity computation.
     if location_type not in LOCATION_TYPE_MAP:
         raise ValueError(
             f"location_type must be one of {list(LOCATION_TYPE_MAP.keys())}, "
@@ -410,12 +350,19 @@ def get_poi_features(
 
     key = _cache_key(lat, lng)
 
-    # Cache check — return immediately if we have this location.
-    # Note: cache stores only the OSM-derived features (12 features).
-    # num_ports and location_type_encoded are appended after cache lookup
-    # because they're caller-supplied, not OSM-derived. This means the
-    # same lat/lng can be queried with different port counts without
-    # invalidating the cached OSM data.
+    # --- Hardcoded fast path for known training site coordinates ---
+    if key in _HARDCODED_COORDS:
+        site = _HARDCODED_COORDS[key]
+        if verbose:
+            print(f"  [poi_features] Using hardcoded features for {site} ({lat:.4f}, {lng:.4f})")
+        osm_features = HARDCODED_SITE_FEATURES[site].copy()
+        return {
+            **osm_features,
+            "num_ports": num_ports,
+            "location_type_encoded": LOCATION_TYPE_MAP[location_type],
+        }
+
+    # --- Cache check for non-hardcoded coordinates ---
     if use_cache:
         cache = _load_cache(cache_path)
         if key in cache:
@@ -428,29 +375,22 @@ def get_poi_features(
                 "location_type_encoded": LOCATION_TYPE_MAP[location_type],
             }
 
+    # --- Live Overpass query ---
     if verbose:
         print(f"  [poi_features] Querying Overpass for ({lat:.4f}, {lng:.4f})...")
 
-    # Main union query — counts all POI types in one request
     main_query = _build_overpass_query(lat, lng, RADIUS_M)
     main_elements = _query_overpass(main_query)
     time.sleep(REQUEST_DELAY_S)
 
-    # Nearest charger query — separate because we need distance, not count,
-    # and we use a larger search radius (5000m) so we always find something
     charger_query = _build_nearest_query(lat, lng, "amenity", "charging_station", radius=5000)
     charger_elements = _query_overpass(charger_query)
     time.sleep(REQUEST_DELAY_S)
 
-    # Nearest highway query — highway nodes along primary/trunk/motorway roads
-    # We query highway=primary nodes as a proxy for major road proximity.
-    # This is an approximation: a dense node set along primary roads means
-    # _nearest_distance_m will return a reasonable distance to the road.
     highway_query = _build_nearest_query(lat, lng, "highway", "primary", radius=5000)
     highway_elements = _query_overpass(highway_query)
     time.sleep(REQUEST_DELAY_S)
 
-    # Extract features from raw elements
     osm_features = _extract_features_from_elements(
         lat, lng, main_elements, charger_elements, highway_elements
     )
@@ -458,7 +398,6 @@ def get_poi_features(
     if verbose:
         print(f"  [poi_features] Extracted: {osm_features}")
 
-    # Cache the OSM features (without caller-supplied metadata)
     if use_cache:
         cache = _load_cache(cache_path)
         cache[key] = osm_features
@@ -473,15 +412,9 @@ def get_poi_features(
 
 def get_feature_names() -> list:
     """
-    Return the ordered list of feature names in the feature vector.
-
-    This is the single source of truth for feature ordering. Both
-    global_model.py (similarity scoring) and the notebook (profile building)
-    must use this function to construct feature vectors — never hardcode
-    the order elsewhere.
-
-    Returns:
-        List of 14 feature name strings in canonical order.
+    Canonical ordered list of feature names. Single source of truth.
+    Both similarity scoring and profile building must use this function
+    to construct feature vectors — never hardcode the order elsewhere.
     """
     return [
         "parking_count",
@@ -503,19 +436,10 @@ def get_feature_names() -> list:
 
 def build_feature_vector(features: dict) -> list:
     """
-    Convert a features dict to an ordered list suitable for numpy/sklearn.
+    Convert a features dict to an ordered list for numpy/sklearn.
+    Uses get_feature_names() as canonical ordering.
 
-    Uses get_feature_names() as the canonical ordering so the vector
-    is always consistent regardless of dict insertion order.
-
-    Args:
-        features: dict returned by get_poi_features()
-
-    Returns:
-        List of 14 floats in canonical feature order.
-
-    Raises:
-        KeyError if any expected feature is missing from the dict.
+    Raises KeyError if any expected feature is missing.
     """
     names = get_feature_names()
     missing = [n for n in names if n not in features]
