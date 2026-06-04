@@ -12,5 +12,19 @@
     "highway_dist_m": 9999.0,
     "primary_road_count": 0,
     "secondary_road_count": 0
+  },
+  "34.202_-118.172": {
+    "parking_count": 0,
+    "office_count": 0,
+    "restaurant_count": 0,
+    "amenity_count": 0,
+    "fuel_station_count": 0,
+    "building_count": 0,
+    "residential_building_count": 0,
+    "transit_stop_count": 0,
+    "nearest_charger_dist_m": 9999.0,
+    "highway_dist_m": 9999.0,
+    "primary_road_count": 0,
+    "secondary_road_count": 0
   }
 }
