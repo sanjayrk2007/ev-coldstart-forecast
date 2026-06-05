@@ -404,3 +404,44 @@ def log_to_mlflow(calibration_stats: dict, coverage_single: pd.DataFrame, covera
         mlflow.log_param("n_calibration_stations", 8)
 
         print("Results logged to MLflow experiment: phase5_uncertainty")
+def save_calibration(output_path: str = "models/calibration.json") -> None:
+    """
+    Serialize the in-memory conformal quantiles to disk.
+    Call this once after calibrate() to avoid recomputing at every API startup.
+    """
+    if _q80 is None:
+        raise RuntimeError("calibrate() must be called before save_calibration().")
+    state = {
+        "q80_single":   _q80,
+        "q90_single":   _q90,
+        "q80_zero":     _q80_zero,
+        "q90_zero":     _q90_zero,
+        "q80_nonzero":  _q80_nonzero,
+        "q90_nonzero":  _q90_nonzero,
+    }
+    import json, os
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(state, f, indent=2)
+    print(f"Calibration state saved to {output_path}")
+
+
+def load_calibration(input_path: str = "models/calibration.json") -> dict:
+    """
+    Load serialized conformal quantiles from disk and populate module globals.
+    Call this at API startup instead of running calibrate().
+    """
+    global _q80, _q90, _q80_zero, _q90_zero, _q80_nonzero, _q90_nonzero
+    import json
+    with open(input_path) as f:
+        state = json.load(f)
+    _q80         = state["q80_single"]
+    _q90         = state["q90_single"]
+    _q80_zero    = state["q80_zero"]
+    _q90_zero    = state["q90_zero"]
+    _q80_nonzero = state["q80_nonzero"]
+    _q90_nonzero = state["q90_nonzero"]
+    print(f"Calibration state loaded from {input_path}")
+    print(f"  q80_zero={_q80_zero:.4f}, q90_zero={_q90_zero:.4f}")
+    print(f"  q80_nonzero={_q80_nonzero:.4f}, q90_nonzero={_q90_nonzero:.4f}")
+    return state
