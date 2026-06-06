@@ -214,20 +214,19 @@ def _build_forecast_df(base_time: Optional[datetime] = None, site_encoded: int =
     return df
 
 
-def _preds_to_forecast(preds_dict: dict, timestamps: pd.Series) -> list[HourlyForecast]:
-    """Convert predict_with_intervals() output dict to list of HourlyForecast."""
+def _preds_to_forecast(preds_df: pd.DataFrame, timestamps: pd.Series) -> list[HourlyForecast]:
+    """Convert predict_with_intervals() output DataFrame to list of HourlyForecast."""
     return [
         HourlyForecast(
             timestamp=pd.Timestamp(ts).to_pydatetime().replace(tzinfo=timezone.utc),
-            predicted=float(preds_dict["predictions"][i]),
-            lower_80=float(preds_dict["lower_80"][i]),
-            upper_80=float(preds_dict["upper_80"][i]),
-            lower_90=float(preds_dict["lower_90"][i]),
-            upper_90=float(preds_dict["upper_90"][i]),
+            predicted=float(preds_df["point_estimate"].iloc[i]),
+            lower_80=float(preds_df["lower_80"].iloc[i]),
+            upper_80=float(preds_df["upper_80"].iloc[i]),
+            lower_90=float(preds_df["lower_90"].iloc[i]),
+            upper_90=float(preds_df["upper_90"].iloc[i]),
         )
         for i, ts in enumerate(timestamps)
     ]
-
 
 # ---------------------------------------------------------------------------
 # Public API — called by main.py
@@ -271,10 +270,9 @@ def run_cold_start(request: ColdStartRequest) -> ColdStartResponse:
         booster = _global_booster
 
     raw_preds = predict(booster, forecast_df)
-    preds_dict = predict_with_intervals(raw_preds, method="conditional")
+    preds_df = predict_with_intervals(raw_preds, method="conditional")
 
-    forecast = _preds_to_forecast(preds_dict, forecast_df["timestamp"])
-
+    forecast = _preds_to_forecast(preds_df, forecast_df["timestamp"])
     return ColdStartResponse(
         station_id=request.station_id,
         model_version=_model_version,
@@ -309,9 +307,9 @@ def run_station_forecast(station_id: str) -> ColdStartResponse:
     forecast_df = df.tail(168).copy().reset_index(drop=True)
 
     raw_preds = predict(_global_booster, forecast_df)
-    preds_dict = predict_with_intervals(raw_preds, method="conditional")
-
-    forecast = _preds_to_forecast(preds_dict, forecast_df["timestamp"])
+    preds_df = predict_with_intervals(raw_preds, method="conditional")
+    forecast = _preds_to_forecast(preds_df, forecast_df["timestamp"])
+    
 
     return ColdStartResponse(
         station_id=station_id,
@@ -348,12 +346,10 @@ def run_site_evaluate(request: SiteEvaluateRequest) -> SiteEvaluateResponse:
 
     weekly_total: float = raw["weekly_total"]
 
-    # Apply conformal intervals to the weekly total
-    preds_arr = np.array([weekly_total])
-    intervals = predict_with_intervals(preds_arr, method="conditional")
-    weekly_low  = float(np.clip(intervals["lower_80"][0], 0, None))
-    weekly_high = float(intervals["upper_80"][0])
-
+    hourly_preds = raw["weekly_profile"]["predicted_sessions"].values
+    intervals = predict_with_intervals(hourly_preds, method="conditional")
+    weekly_low  = float(np.sum(intervals["lower_80"].values))
+    weekly_high = float(np.sum(intervals["upper_80"].values))
     tier = _demand_tier(weekly_total)
     interval_width = weekly_high - weekly_low
 
