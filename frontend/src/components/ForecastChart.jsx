@@ -120,6 +120,18 @@ export default function ForecastChart({ forecast }) {
             }}
           />
           <YAxis
+            label={{
+              value: 'Sessions per hour',
+              angle: -90,
+              position: 'insideLeft',
+              offset: 10,
+              style: {
+                fontSize: '10px',
+                fontFamily: 'var(--font-family-sans)',
+                fill: 'var(--color-on-surface-variant)',
+                textAnchor: 'middle',
+              },
+            }}
             stroke="var(--color-on-surface-variant)"
             tickLine={false}
             axisLine={false}
