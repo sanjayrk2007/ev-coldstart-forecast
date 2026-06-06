@@ -376,3 +376,8 @@ def run_site_evaluate(request: SiteEvaluateRequest) -> SiteEvaluateResponse:
         similar_stations=similar,
         model_version=_model_version,
     )
+
+
+def list_available_stations() -> list[str]:
+    """Returns sorted list of all training station IDs in memory."""
+    return sorted(list(_station_profiles.keys()))

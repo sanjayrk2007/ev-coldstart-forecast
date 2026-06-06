@@ -121,3 +121,15 @@ def site_evaluate(request: SiteEvaluateRequest):
         return predictor.run_site_evaluate(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Site evaluation failed: {str(e)}")
+
+
+@app.get("/stations", response_model=list[str], tags=["Forecast"])
+def list_stations():
+    """
+    Returns list of all available training stations.
+    Useful for populating dropdowns on the frontend dashboard.
+    """
+    try:
+        return predictor.list_available_stations()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list stations: {str(e)}")
