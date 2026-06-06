@@ -1,177 +1,120 @@
-# ⚡ EV Cold-Start Forecasting 
+# EV Cold-Start Demand Forecasting
 
-> Predicting hourly demand for newly installed EV charging stations with zero usage history.
+> Predicting hourly EV charging demand for newly installed stations with **zero usage history** — plus pre-installation site scoring for operators.
 
-![Python](https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python&logoColor=white)
-![LightGBM](https://img.shields.io/badge/LightGBM-gradient%20boosting-brightgreen?style=flat-square)
-![MLflow](https://img.shields.io/badge/MLflow-experiment%20tracking-orange?style=flat-square&logo=mlflow)
-![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square&logo=fastapi&logoColor=white)
-![React](https://img.shields.io/badge/React-frontend-61DAFB?style=flat-square&logo=react&logoColor=black)
-![Status](https://img.shields.io/badge/Status-Phase%203%20Complete-success?style=flat-square)
 
 ---
 
-## 🧩 The Problem
+## The Problem
 
-A newly installed EV charging station has **zero usage history**.  
-Standard forecasting models fail without data.  
-Operators are flying blind on demand, capacity planning, and grid load.
+Demand forecasting requires history. New stations have none. Without forecasts, operators can't optimise pricing, staffing, or grid load in the critical weeks after installation.
 
----
+This system solves it with four layers:
 
-## 💡 The Solution
-
-A four-layer ML system that solves cold-start from day one:
-
-```
-ACN-Data (107 stations)
-        │
-        ▼
-┌─────────────────────────┐
-│   Global LightGBM Model │  ← learns shared demand grammar across all stations
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│   Transfer + Fine-Tune  │  ← adapts to new station with 1 week of data
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│  Synthetic Augmentation │  ← TimeGAN / Gaussian Copula fills history gaps
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│  Conformal Prediction   │  ← calibrated uncertainty intervals, not just points
-└─────────────────────────┘
-```
+| Layer | What it does |
+|-------|-------------|
+| **Transfer learning** | Borrows temporal patterns from 107 data-rich stations |
+| **Synthetic augmentation** | Generates plausible session history via Gaussian Copula |
+| **Conformal prediction** | Calibrated uncertainty intervals, not just point estimates |
+| **Site selection** | Scores candidate locations using OSM POI features — before installation |
 
 ---
 
-## 📊 Results — Phase 3 Transfer Learning
+## Results
 
-> All models evaluated on **office001** — a completely held-out site,  
-> never seen during training or validation.
+| Metric | Value |
+|--------|-------|
+| MAE improvement (transfer vs baseline) | ~1.1–1.4× on held-out site |
+| Coverage @ 80% intervals | **0.92** (target: 0.80) |
+| Coverage @ 90% intervals | **0.96** (target: 0.90) |
+| Training stations | 107 (Caltech + JPL) |
+| Test site | office001 — 8 stations, never seen during training |
+| Forecast horizon | 168 hours (one week) |
 
-| Weeks of Data | 🔁 Transfer MAE | Vanilla LightGBM | Seasonal Naive |
-|:---:|:---:|:---:|:---:|
-| 1 week | **0.0279** | 0.0300 | 0.3488 |
-| 2 weeks | **0.0290** | 0.0402 | 0.3438 |
-| 3 weeks | **0.0284** | 0.0353 | 0.3481 |
+**Notable findings**
 
-**Key finding:** Transfer MAE is flat across all data volumes.  
-→ One week of new-station data is sufficient for near-optimal predictions.  
-→ Vanilla LightGBM degrades with more weeks — overfitting on sparse data.  
-→ Transfer beats Seasonal Naive by **12×**.
-
----
-
-## 🗂️ Data
-
-- **Source:** [ACN-Data](https://ev.caltech.edu/dataset) — real EV charging sessions from Caltech, JPL, and office campuses
-- **Training:** 107 stations across Caltech + JPL (2,020,364 rows)
-- **Test site:** office001 — 8 stations, held out entirely, never touched during training
+- Synthetic augmentation hurt performance in all configurations — the transfer model saturates the available signal at one week of fine-tuning. Augmentation damage decreases monotonically with real data volume. Documented as a finding, not a failure.
+- Zero-inflation (86–96% of hours are zero demand) breaks single-quantile conformal coverage. Conditional quantiles per regime (zero vs non-zero) reduced worst-station gap from −0.057 to −0.014.
 
 ---
 
-## 🔬 Experiment Tracking
-
-All runs logged to MLflow across every phase.
+## Quick Start
 
 ```bash
-mlflow ui
-# → http://localhost:5000
-```
-
-| Experiment | Runs | Description |
-|---|---|---|
-| `phase3_transfer` | 48 | Transfer vs vanilla, 8 stations × 3 volumes × 2 models |
-
----
-
-## 🚀 Setup
-
-```bash
-git clone https://github.com/YOUR_USERNAME/ev-coldstart-forecast.git
+git clone https://github.com/your-username/ev-coldstart-forecast
 cd ev-coldstart-forecast
 cp .env.example .env
-docker-compose up
+python -m venv venv && venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# Start API
+uvicorn src.api.main:app --reload --port 8000
+
+# Run tests
+pytest tests/test_api.py -v   # 10 tests, all passing
+
+# MLflow UI
+mlflow ui --port 5000
 ```
+
+
+## How It Works
+
+**Transfer learning** — One LightGBM model trained on all 107 stations. `site_encoded` as a coarse integer feature (not one-hot) outperforms under zero-inflation + L1 loss. Fine-tuning adds station-specific correction trees via `lgb.train(init_model=global_booster)`.
+
+**Conformal prediction** — Distribution-free coverage using MAPIE, calibrated on the held-out office001 site. Conditional quantiles: `q80_nonzero=0.295`, `q90_nonzero=0.703`, both zero-regime quantiles near 0.
+
+**Site selection** — 14-dimension OSM POI feature vectors per station (parking, offices, transit, highway proximity, etc.). Cosine similarity against 107 training profiles → top-3 similar stations → hour-matched weighted synthetic profile → global model inference.
 
 ---
 
-## 🗺️ Build Progress
+## Project Status
 
-| Phase | Focus | Status |
-|-------|-------|:---:|
-| 0 | Environment setup | ✅ |
-| 1 | Data ingestion + EDA | ✅ |
-| 2 | Baseline models | ✅ |
+| Phase | | Status |
+|-------|-|--------|
+| 0–2 | Setup, data pipeline, baselines | ✅ |
 | 3 | Transfer learning | ✅ |
-| 4 | Synthetic augmentation | 🔄 |
-| 5 | Uncertainty quantification | ⬜ |
-| 6 | Site selection | ⬜ |
-| 7 | FastAPI backend | ⬜ |
-| 8 | React frontend | ⬜ |
-| 9 | Docker + AWS | ⬜ |
-| 10 | README + docs | ⬜ |
+| 4 | Synthetic augmentation | ✅ |
+| 5 | Conformal prediction | ✅ |
+| 6 | Site selection scoring | ✅ |
+| 7 | FastAPI backend | ✅ |
+| 8 | React frontend | 🔄 In progress |
+| 9–10 | Docker, deployment, docs | ⏳ |
 
 ---
 
-## 🧠 Key Decisions
-
-<details>
-<summary><b>Why LightGBM over a neural network?</b></summary>
-<br>
-Limited data per station makes deep models unstable under scarce data conditions.
-LightGBM trains in seconds, enabling rapid ablation across 24 experiment runs.
-Stability under scarcity matters more than model capacity here.
-</details>
-
-<details>
-<summary><b>Why office001 as the held-out test site?</b></summary>
-<br>
-office001 was never seen during global model training or validation.
-It represents a genuinely unseen operational context — the closest
-simulation of a real cold-start deployment scenario.
-</details>
-
-<details>
-<summary><b>Why not ARIMA?</b></summary>
-<br>
-statsforecast has a known multiprocessing conflict on Windows + Jupyter.
-ARIMA results would be expected to fall between SeasonalNaive and LightGBM
-baselines — not competitive with transfer learning at any data volume.
-</details>
-
----
-
-## 📁 Project Structure
+## Repo Structure
 
 ```
-ev-coldstart-forecast/
-├── src/
-│   ├── data/          # loader, preprocessor, feature engineering
-│   ├── models/        # global_model, transfer, baseline
-│   ├── evaluation/    # metrics
-│   └── api/           # FastAPI app (Phase 6)
-├── notebooks/         # EDA, phase ablations
-├── data/
-│   ├── raw/
-│   ├── processed/     # per-station parquet files
-│   └── synthetic/     # augmented data (Phase 4)
-├── models/            # saved model artifacts
-├── frontend/          # React dashboard (Phase 7)
-└── docker-compose.yml
+src/
+├── data/         fetch, loader, preprocessor, features, poi_features
+├── models/       global_model, transfer, uncertainty, baseline
+├── augmentation/ synthesizer (GaussianCopula + TimeGAN stub)
+├── evaluation/   metrics
+└── api/          schemas, predictor, main
+
+models/           global_model.pkl, calibration.json
+data/cache/       station_profiles.json (107 stations), poi_cache.json
+tests/            test_api.py (10 tests)
+notebooks/        eda.ipynb
+reports/          calibration_curve.png, site_selection_weekly_profile.png
 ```
 
 ---
 
-<p align="center">
-  Built on <a href="https://ev.caltech.edu/dataset">ACN-Data</a> ·
-  Tracked with <a href="https://mlflow.org">MLflow</a> ·
-  Deployed on AWS EC2
-</p>
+## Limitations
 
+- **Augmentation** consistently hurt — transfer model already saturates at 1 week of data
+- **Overpass API** blocked on dev network — Caltech/JPL POI features hardcoded; live path preserved
+- **Geography** — trained on US campus/office data; wider uncertainty for other contexts
+- **TimeGAN** — stub only; full training requires GPU
+- **ARIMA** — skipped due to statsforecast/Windows multiprocessing conflict
+
+---
+
+## Data
+
+ACN-Data (`ev.caltech.edu`) · 3 sites · Caltech (55 stations) · JPL (52 stations) · office001 (8 stations, held out)
+
+Features: `hour, day_of_week, month, is_weekend, is_holiday, lag_1h, lag_24h, lag_168h, rolling_24h_mean, rolling_7d_mean, site_encoded`
 
