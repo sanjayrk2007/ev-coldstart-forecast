@@ -89,7 +89,7 @@ class SiteEvaluateRequest(BaseModel):
     lat:           float = Field(..., ge=-90,  le=90,  description="Latitude")
     lng:           float = Field(..., ge=-180, le=180, description="Longitude")
     num_ports:     int   = Field(2,   ge=1,            description="Number of charging ports planned")
-    location_type: str   = Field("office", description="Location type: 'office', 'campus', 'public', 'residential'")
+    location_type: str   = Field("workplace", description="Location type: 'workplace', 'public', 'retail'")
 
     class Config:
         json_schema_extra = {
@@ -97,7 +97,7 @@ class SiteEvaluateRequest(BaseModel):
                 "lat": 34.2020,
                 "lng": -118.1720,
                 "num_ports": 4,
-                "location_type": "office"
+                "location_type": "workplace"
             }
         }
 
