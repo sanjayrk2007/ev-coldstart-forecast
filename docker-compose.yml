@@ -4,17 +4,17 @@ services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile.api   # created in Phase 8
+      dockerfile: Dockerfile.api
     ports:
       - "8000:8000"
     env_file:
       - .env
     volumes:
       - ./data:/app/data
+      - ./models:/app/models
     depends_on:
       - mlflow
-    # uncomment after Dockerfile.api exists:
-    # command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.13.2
@@ -28,3 +28,4 @@ services:
       --port 5000
       --backend-store-uri /mlflow/mlruns
       --default-artifact-root /mlflow/mlruns
+    restart: unless-stopped
