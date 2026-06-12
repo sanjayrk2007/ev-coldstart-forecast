@@ -1,23 +1,15 @@
 FROM python:3.11-slim
-
 WORKDIR /app
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
-
 # Copy and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy source code
+# Copy source code only - data/models mounted via volumes at runtime
 COPY src/ ./src/
-COPY data/processed/ ./data/processed/
-COPY models/ ./models/
-
 # Expose API port
 EXPOSE 8000
-
 # Start the API from project root so imports resolve correctly
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
