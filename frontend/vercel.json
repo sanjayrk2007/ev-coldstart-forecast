@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    { "source": "/health", "destination": "http://13.201.22.233:8000/health" },
+    { "source": "/stations", "destination": "http://13.201.22.233:8000/stations" },
+    { "source": "/forecast/:path*", "destination": "http://13.201.22.233:8000/forecast/:path*" },
+    { "source": "/site/:path*", "destination": "http://13.201.22.233:8000/site/:path*" }
+  ]
+}
