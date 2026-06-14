@@ -11,6 +11,8 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ./src:/app/src
+      - ./models:/app/models
     depends_on:
       - mlflow
     # uncomment after Dockerfile.api exists:
