@@ -17,7 +17,7 @@ import json
 import pickle
 import sys
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -65,6 +65,9 @@ _station_profiles: dict = {}
 _model_version: str = "unknown"
 _calibration_loaded: bool = False
 _global_model_loaded: bool = False
+_calibration_q80_single: float = 0.0
+_calibration_q80_zero: float = 0.0
+_calibration_q80_nonzero: float = 0.0
 
 
 def startup() -> None:
@@ -81,7 +84,9 @@ def startup() -> None:
         raise FileNotFoundError(f"Global model not found: {MODEL_PATH}")
     with open(MODEL_PATH, "rb") as f:
         _global_booster = pickle.load(f)
-    _model_version = MODEL_PATH.stat().st_mtime.__str__()[:10]
+    _model_version = hashlib.sha256(
+        open(MODEL_PATH, "rb").read()
+    ).hexdigest()[:12]
     _global_model_loaded = True
     print(f"[predictor] Global model loaded from {MODEL_PATH}")
 
@@ -90,6 +95,12 @@ def startup() -> None:
         raise FileNotFoundError(f"Calibration file not found: {CALIB_PATH}")
     load_calibration(str(CALIB_PATH))
     _calibration_loaded = True
+    # Store calibration values from the uncertainty module for health endpoint
+    from src.models import uncertainty as _uncertainty
+    global _calibration_q80_single, _calibration_q80_zero, _calibration_q80_nonzero
+    _calibration_q80_single  = getattr(_uncertainty, '_q80', 0.0) or 0.0
+    _calibration_q80_zero    = getattr(_uncertainty, '_q80_zero', 0.0) or 0.0
+    _calibration_q80_nonzero = getattr(_uncertainty, '_q80_nonzero', 0.0) or 0.0
     print(f"[predictor] Calibration quantiles loaded from {CALIB_PATH}")
 
     # 3. Station profiles
@@ -249,9 +260,20 @@ def _sessions_to_hourly_df(
     demand = pd.Series(0.0, index=idx)
 
     for s in sessions:
-        start = s.start_time.replace(tzinfo=None).replace(minute=0, second=0, microsecond=0)
-        end   = s.end_time.replace(tzinfo=None).replace(minute=0, second=0, microsecond=0)
-        hours = pd.date_range(start, end, freq="h")
+        # Normalize to UTC first, then strip tzinfo to avoid hour misalignment
+        start_dt = s.start_time
+        end_dt = s.end_time
+        if hasattr(start_dt, 'tzinfo') and start_dt.tzinfo is not None:
+            start_dt = start_dt.astimezone(timezone.utc).replace(tzinfo=None)
+        if hasattr(end_dt, 'tzinfo') and end_dt.tzinfo is not None:
+            end_dt = end_dt.astimezone(timezone.utc).replace(tzinfo=None)
+        start = start_dt.replace(minute=0, second=0, microsecond=0)
+        end   = end_dt.replace(minute=0, second=0, microsecond=0)
+        # Ceil then subtract 1h: 09:00-11:00 covers hours 9,10 only
+        end_hour = end.ceil("h") - pd.Timedelta(hours=1)
+        if end_hour < start:
+            end_hour = start
+        hours = pd.date_range(start=start, end=end_hour, freq="h")
         for h in hours:
             if h in demand.index:
                 demand[h] += 1.0
@@ -275,14 +297,12 @@ def _sessions_to_hourly_df(
 def _build_forecast_df(base_time: Optional[datetime] = None, site_encoded: int = 2) -> pd.DataFrame:
     """
     Build a 168-row feature DataFrame for a one-week ahead forecast
-    starting from base_time (defaults to next Monday 00:00 UTC).
+    starting from base_time (defaults to current hour rounded down).
     Lag and rolling features are zeroed — appropriate for cold start.
     """
     if base_time is None:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        days_ahead = (7 - now.weekday()) % 7 or 7
-        base_time = (now + timedelta(days=days_ahead)).replace(
-            hour=0, minute=0, second=0, microsecond=0)
+        base_time = now.replace(minute=0, second=0, microsecond=0)
 
     idx = pd.date_range(base_time, periods=168, freq="h")
     df = pd.DataFrame({"timestamp": idx})
@@ -324,6 +344,9 @@ def get_health() -> HealthResponse:
         model_version=_model_version,
         calibration_loaded=_calibration_loaded,
         global_model_loaded=_global_model_loaded,
+        q80_single=_calibration_q80_single,
+        q80_zero=_calibration_q80_zero,
+        q80_nonzero=_calibration_q80_nonzero,
     )
 
 
@@ -340,18 +363,22 @@ def run_cold_start(request: ColdStartRequest) -> ColdStartResponse:
         1. Build 168-row forecast DataFrame (zero lags)
         2. Run predict_with_intervals() on global booster directly
     """
-    site_encoded = SITE_MAP.get(request.site, 2)  # unknown sites → office001 encoding
+    site_encoded = SITE_MAP.get(request.site.lower().strip(), 2)  # unknown → office001 encoding
     fine_tuned = False
 
     forecast_df = _build_forecast_df(site_encoded=site_encoded)
 
     if request.sessions and len(request.sessions) > 0:
         train_df = _sessions_to_hourly_df(request.sessions, site_encoded=site_encoded)
-        if len(train_df) >= 2:
+        MIN_FINETUNE_ROWS = 336  # 2 weeks of hourly data minimum
+        if len(train_df) >= MIN_FINETUNE_ROWS:
             booster = fine_tune(_global_booster, train_df)
             fine_tuned = True
         else:
             booster = _global_booster
+            if len(train_df) > 0:
+                print(f"[INFO] Skipping fine-tune: only {len(train_df)} rows "
+                      f"(minimum {MIN_FINETUNE_ROWS} required). Using global booster.")
     else:
         booster = _global_booster
 
@@ -389,7 +416,9 @@ def run_station_forecast(station_id: str) -> ColdStartResponse:
     df["site_encoded"] = site_encoded
     df[FEATURE_COLS[:-1]] = df[FEATURE_COLS[:-1]].fillna(0)
 
-    # Use last 168 rows as the forecast window
+    # Note: uses real lag/rolling features from station history,
+    # not zero-lag cold-start features. Intervals reflect in-distribution
+    # uncertainty, not cold-start uncertainty.
     forecast_df = df.tail(168).copy().reset_index(drop=True)
 
     raw_preds = predict(_global_booster, forecast_df)

@@ -31,7 +31,10 @@ def expand_session_to_hours(row: pd.Series) -> pd.DataFrame:
     """
     # Floor to nearest hour — partial hour counts as occupied
     start_hour = row["session_start"].floor("h")
-    end_hour = row["session_end"].floor("h")
+    # Ceil then subtract 1h: 09:00-11:00 covers hours 9,10 only
+    end_hour = row["session_end"].ceil("h") - pd.Timedelta(hours=1)
+    if end_hour < start_hour:
+        end_hour = start_hour
 
     # Generate every hour between start and end inclusive
     hours = pd.date_range(start=start_hour, end=end_hour, freq="h")

@@ -6,6 +6,7 @@ import mlflow.lightgbm
 from pathlib import Path
 import pickle
 import hashlib
+from datetime import datetime
 
 PROCESSED_DIR = Path(__file__).resolve().parents[2] / 'data' / 'processed'
 MODEL_DIR     = Path(__file__).resolve().parents[2] / 'models'
@@ -20,7 +21,20 @@ FEATURE_COLS = [
 ]
 TARGET_COL = 'sessions'
 
-SITE_MAP = {'caltech': 0, 'jpl': 1, 'office001': 2}
+SITE_MAP = {
+    'caltech': 0,
+    'jpl': 1,
+    'office001': 2,
+    # Frontend dropdown mappings
+    'office / workplace': 1,
+    'office / corporate campus': 1,
+    'university / campus': 0,
+    'mixed-use commercial': 1,
+    'public parking': 1,
+    'public parking / municipal hub': 1,
+    'highway / transit corridor': 1,
+    'residential': 2,
+}
 
 
 def load_training_stations(sites=('caltech', 'jpl')):
@@ -200,7 +214,7 @@ def build_synthetic_profile(
     for hour_of_week in range(168):
         day_of_week = hour_of_week // 24
         hour = hour_of_week % 24
-        month = 6  # June — representative mid-year, not a holiday month
+        month = datetime.now().month
         is_weekend = int(day_of_week >= 5)
         # June 3 2024 was a Monday — offset gives Mon through Sun
         ref_date = _date(2024, 6, 3 + day_of_week)
@@ -346,16 +360,20 @@ def score_candidate(
     #    (which collapses to 2 groups because training profiles share only 2
     #    unique feature vectors).
     # ------------------------------------------------------------------
-    port_factor = max(num_ports, 1) / 2.0
+    # sqrt scaling: diminishing returns per port (heuristic, not empirically validated)
+    port_factor = (max(num_ports, 1) ** 0.5) / (2.0 ** 0.5)
 
     location_demand_baseline = {"workplace": 1.0, "public": 1.15, "retail": 1.25}
     type_factor = location_demand_baseline.get(location_type, 1.0)
 
-    coord_seed = hashlib.sha256(f"{lat:.6f}_{lng:.6f}".encode()).hexdigest()
-    coord_hash = int(coord_seed[:8], 16) / 0xFFFFFFFF
-    coord_factor = 0.7 + coord_hash * 0.6  # deterministic in [0.7, 1.3]
+    # NOTE: No coordinate-based multiplier is applied here.
+    # Only 2 training sites exist (Caltech, JPL), so the POI similarity
+    # collapses to 2 groups. Adding a hash-based ±30% multiplier would
+    # introduce arbitrary noise that dominates real signal — any
+    # differentiation must come from better POI features or more
+    # training sites, not from coordinate hashing.
 
-    predictions = predictions * port_factor * type_factor * coord_factor
+    predictions = predictions * port_factor * type_factor
 
     import pandas as _pd
     weekly_profile = profile_df[["hour_of_week", "hour", "day_of_week"]].copy()

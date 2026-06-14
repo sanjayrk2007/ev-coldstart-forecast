@@ -883,15 +883,15 @@ export default function App() {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-opacity-10)', paddingBottom: '6px' }}>
                     <span className="body-base" style={{ color: 'var(--color-on-surface-variant)' }}>q80 Single</span>
-                    <span className="data-mono">0.082 sessions</span>
+                    <span className="data-mono">{healthStatus?.q80_single?.toFixed(3) ?? '—'} sessions</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-opacity-10)', paddingBottom: '6px' }}>
                     <span className="body-base" style={{ color: 'var(--color-on-surface-variant)' }}>q80 Zero-Regime</span>
-                    <span className="data-mono">0.000 sessions</span>
+                    <span className="data-mono">{healthStatus?.q80_zero?.toFixed(3) ?? '—'} sessions</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-opacity-10)', paddingBottom: '6px' }}>
                     <span className="body-base" style={{ color: 'var(--color-on-surface-variant)' }}>q80 Non-Zero-Regime</span>
-                    <span className="data-mono">0.125 sessions</span>
+                    <span className="data-mono">{healthStatus?.q80_nonzero?.toFixed(3) ?? '—'} sessions</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '6px' }}>
                     <span className="body-base" style={{ color: 'var(--color-on-surface-variant)' }}>Target Alpha Level</span>

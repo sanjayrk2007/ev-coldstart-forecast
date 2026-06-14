@@ -143,7 +143,10 @@ class SiteEvaluateResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """API health and model status."""
-    status:              str  = Field(..., description="'ok' or 'degraded'")
-    model_version:       str  = Field(..., description="global_model.pkl artifact identifier")
-    calibration_loaded:  bool = Field(..., description="True if conformal quantiles are loaded")
-    global_model_loaded: bool = Field(..., description="True if LightGBM model is in memory")
+    status:              str   = Field(..., description="'ok' or 'degraded'")
+    model_version:       str   = Field(..., description="global_model.pkl artifact identifier")
+    calibration_loaded:  bool  = Field(..., description="True if conformal quantiles are loaded")
+    global_model_loaded: bool  = Field(..., description="True if LightGBM model is in memory")
+    q80_single:          float = Field(0.0, description="80% conformal half-width (single regime)")
+    q80_zero:            float = Field(0.0, description="80% conformal half-width (zero-demand regime)")
+    q80_nonzero:         float = Field(0.0, description="80% conformal half-width (active-demand regime)")

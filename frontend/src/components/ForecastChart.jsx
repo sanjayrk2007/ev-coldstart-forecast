@@ -3,8 +3,7 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
-  LineChart,
-  Line,
+  ReferenceArea,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -159,16 +158,36 @@ export default function ForecastChart({ forecast }) {
               fontWeight: 600,
             }}
           />
-          {/* 90% band */}
-          <Area name="90% Conformal Range" type="monotone" dataKey="upper_90"
-          stroke="none" fill="var(--color-primary)" fillOpacity={0.06} activeDot={false} legendType="none" />
-          <Area type="monotone" dataKey="lower_90"
-          stroke="none" fill="var(--color-surface)" fillOpacity={1} activeDot={false} legendType="none" />
-          {/* 80% band */}
-          <Area name="80% Conformal Range" type="monotone" dataKey="upper_80"
-          stroke="none" fill="var(--color-primary)" fillOpacity={0.12} activeDot={false} legendType="none" />
-          <Area type="monotone" dataKey="lower_80"
-          stroke="none" fill="var(--color-surface)" fillOpacity={1} activeDot={false} legendType="none" />
+          {/* 90% Conformal Band — ReferenceArea avoids CSS variable dependency */}
+          {data.map((entry, index) => (
+            index < data.length - 1 ? (
+              <ReferenceArea
+                key={`band90-${index}`}
+                x1={entry.formattedTime}
+                x2={data[index + 1].formattedTime}
+                y1={entry.lower_90}
+                y2={entry.upper_90}
+                fill="var(--color-primary)"
+                fillOpacity={0.06}
+                strokeOpacity={0}
+              />
+            ) : null
+          ))}
+          {/* 80% Conformal Band */}
+          {data.map((entry, index) => (
+            index < data.length - 1 ? (
+              <ReferenceArea
+                key={`band80-${index}`}
+                x1={entry.formattedTime}
+                x2={data[index + 1].formattedTime}
+                y1={entry.lower_80}
+                y2={entry.upper_80}
+                fill="var(--color-primary)"
+                fillOpacity={0.12}
+                strokeOpacity={0}
+              />
+            ) : null
+          ))}
           {/* Point Forecast Line */}
           <Area
             name="Point Forecast"

@@ -349,13 +349,25 @@ def evaluate_coverage(
     coverage_df = pd.DataFrame(results)
 
     if not coverage_df.empty:
+        # Weight by number of evaluation rows per station
+        weights = coverage_df["eval_rows"] if "eval_rows" in coverage_df.columns else None
+        if weights is not None and weights.sum() > 0:
+            cov_80 = round((coverage_df["coverage_80"] * weights).sum() / weights.sum(), 4)
+            cov_90 = round((coverage_df["coverage_90"] * weights).sum() / weights.sum(), 4)
+            gap_80 = round((coverage_df["gap_80"] * weights).sum() / weights.sum(), 4)
+            gap_90 = round((coverage_df["gap_90"] * weights).sum() / weights.sum(), 4)
+        else:
+            cov_80 = round(coverage_df["coverage_80"].mean(), 4)
+            cov_90 = round(coverage_df["coverage_90"].mean(), 4)
+            gap_80 = round(coverage_df["gap_80"].mean(), 4)
+            gap_90 = round(coverage_df["gap_90"].mean(), 4)
         agg = {
             "station_id": "OVERALL",
             "eval_rows": coverage_df["eval_rows"].sum(),
-            "coverage_80": round(coverage_df["coverage_80"].mean(), 4),
-            "coverage_90": round(coverage_df["coverage_90"].mean(), 4),
-            "gap_80": round(coverage_df["gap_80"].mean(), 4),
-            "gap_90": round(coverage_df["gap_90"].mean(), 4),
+            "coverage_80": cov_80,
+            "coverage_90": cov_90,
+            "gap_80": gap_80,
+            "gap_90": gap_90,
         }
         coverage_df = pd.concat(
             [coverage_df, pd.DataFrame([agg])], ignore_index=True
