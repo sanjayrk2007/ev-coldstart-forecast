@@ -40,8 +40,10 @@ export default function ForecastChart({ forecast }) {
       timestamp: d.timestamp,
       formattedTime,
       predicted: Math.max(0, d.predicted),
-      range_80: [Math.max(0, d.lower_80), d.upper_80],
-      range_90: [Math.max(0, d.lower_90), d.upper_90],
+      lower_80: Math.max(0, d.lower_80),
+      upper_80: d.upper_80,
+      lower_90: Math.max(0, d.lower_90),
+      upper_90: d.upper_90,
     };
   });
 
@@ -54,8 +56,10 @@ export default function ForecastChart({ forecast }) {
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       const predVal = payload.find(p => p.dataKey === 'predicted')?.value ?? 0;
-      const range80 = payload.find(p => p.dataKey === 'range_80')?.value ?? [0, 0];
-      const range90 = payload.find(p => p.dataKey === 'range_90')?.value ?? [0, 0];
+      const lower80 = payload.find(p => p.dataKey === 'lower_80')?.value ?? 0;
+      const upper80 = payload.find(p => p.dataKey === 'upper_80')?.value ?? 0;
+      const lower90 = payload.find(p => p.dataKey === 'lower_90')?.value ?? 0;
+      const upper90 = payload.find(p => p.dataKey === 'upper_90')?.value ?? 0;
 
       return (
         <div style={{
@@ -77,11 +81,11 @@ export default function ForecastChart({ forecast }) {
           </div>
           <div className="data-mono" style={{ color: 'var(--color-on-surface)', display: 'flex', justifyContent: 'space-between', gap: '16px', fontSize: '12px' }}>
             <span>80% Range:</span>
-            <span>[{range80[0].toFixed(2)}, {range80[1].toFixed(2)}]</span>
+            <span>[{lower80.toFixed(2)}, {upper80.toFixed(2)}]</span>
           </div>
           <div className="data-mono" style={{ color: 'var(--color-on-surface-variant)', display: 'flex', justifyContent: 'space-between', gap: '16px', fontSize: '12px' }}>
             <span>90% Range:</span>
-            <span>[{range90[0].toFixed(2)}, {range90[1].toFixed(2)}]</span>
+            <span>[{lower90.toFixed(2)}, {upper90.toFixed(2)}]</span>
           </div>
         </div>
       );
@@ -155,26 +159,16 @@ export default function ForecastChart({ forecast }) {
               fontWeight: 600,
             }}
           />
-          {/* Conformal Bounds (90% Interval) */}
-          <Area
-            name="90% Conformal Range"
-            type="monotone"
-            dataKey="range_90"
-            stroke="none"
-            fill="var(--color-primary)"
-            fillOpacity={0.06}
-            activeDot={false}
-          />
-          {/* Conformal Bounds (80% Interval) */}
-          <Area
-            name="80% Conformal Range"
-            type="monotone"
-            dataKey="range_80"
-            stroke="none"
-            fill="var(--color-primary)"
-            fillOpacity={0.12}
-            activeDot={false}
-          />
+          {/* 90% band */}
+          <Area name="90% Conformal Range" type="monotone" dataKey="upper_90"
+          stroke="none" fill="var(--color-primary)" fillOpacity={0.06} activeDot={false} legendType="none" />
+          <Area type="monotone" dataKey="lower_90"
+          stroke="none" fill="var(--color-surface)" fillOpacity={1} activeDot={false} legendType="none" />
+          {/* 80% band */}
+          <Area name="80% Conformal Range" type="monotone" dataKey="upper_80"
+          stroke="none" fill="var(--color-primary)" fillOpacity={0.12} activeDot={false} legendType="none" />
+          <Area type="monotone" dataKey="lower_80"
+          stroke="none" fill="var(--color-surface)" fillOpacity={1} activeDot={false} legendType="none" />
           {/* Point Forecast Line */}
           <Area
             name="Point Forecast"
